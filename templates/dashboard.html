@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Card Maker</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .navbar {
+            background: white;
+            padding: 15px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .navbar-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 20px;
+        }
+        .navbar-brand {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: var(--primary-color);
+        }
+        .navbar-menu {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+        .credits-display {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+        }
+        .nav-link {
+            color: var(--text-primary);
+            text-decoration: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            transition: all 0.3s;
+        }
+        .nav-link:hover {
+            background: var(--bg-color);
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="navbar-content">
+            <div class="navbar-brand">📚 Card Maker</div>
+            <div class="navbar-menu">
+                <span class="credits-display">💎 {{ user.credits }} Credits</span>
+                <a href="/pricing" class="nav-link">💳 Buy Credits</a>
+                <a href="/transactions" class="nav-link">📊 History</a>
+                <a href="/logout" class="nav-link">🚪 Logout</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <header>
+            <h1>Welcome, {{ user.username }}! 👋</h1>
+            <p class="subtitle">Transform books into study cards</p>
+        </header>
+
+        <div class="upload-section">
+            <div class="tabs">
+                <button class="tab-btn active" onclick="switchTab('file')">
+                    📄 Upload File
+                </button>
+                <button class="tab-btn" onclick="switchTab('text')">
+                    ✍️ Paste Text
+                </button>
+            </div>
+
+            <!-- File Upload Tab -->
+            <div id="file-tab" class="tab-content active">
+                <div class="upload-box">
+                    <div class="upload-icon">📤</div>
+                    <h3>Upload your document</h3>
+                    <p>Supports PDF and TXT files (up to 50MB)</p>
+                    <input type="file" id="fileInput" accept=".pdf,.txt" hidden>
+                    <button class="btn-primary" onclick="document.getElementById('fileInput').click()">
+                        Choose File
+                    </button>
+                    <div id="fileName" class="file-name"></div>
+                </div>
+
+                <div class="options">
+                    <label>
+                        Number of cards: <span id="cardsNum">10</span> (Credits needed: <span id="creditsNeeded">2</span>)
+                        <input type="range" id="numCards" value="10" min="5" max="50" step="5" oninput="updateCredits()">
+                    </label>
+                </div>
+
+                <button class="btn-generate" id="generateBtn" onclick="generateCardsFromFile()" disabled>
+                    Generate Cards ✨
+                </button>
+            </div>
+
+            <!-- Text Input Tab -->
+            <div id="text-tab" class="tab-content">
+                <textarea 
+                    id="textInput" 
+                    placeholder="Paste your book content, syllabus, or study material here..."
+                    rows="10"
+                ></textarea>
+
+                <div class="options">
+                    <label>
+                        Number of cards: <span id="cardsNumText">10</span> (Credits needed: <span id="creditsNeededText">2</span>)
+                        <input type="range" id="numCardsText" value="10" min="5" max="50" step="5" oninput="updateCreditsText()">
+                    </label>
+                </div>
+
+                <button class="btn-generate" onclick="generateCardsFromText()">
+                    Generate Cards ✨
+                </button>
+            </div>
+        </div>
+
+        <!-- Loading Spinner -->
+        <div id="loading" class="loading hidden">
+            <div class="spinner"></div>
+            <p>Analyzing content and generating cards...</p>
+        </div>
+
+        <!-- Error Message -->
+        <div id="error" class="error hidden"></div>
+
+        <!-- Cards Display -->
+        <div id="cardsContainer" class="cards-container hidden">
+            <div class="cards-header">
+                <h2>Your Study Cards (<span id="cardCount">0</span>)</h2>
+                <div class="cards-actions">
+                    <button class="btn-secondary" onclick="exportCards('json')">
+                        💾 Export JSON
+                    </button>
+                    <button class="btn-secondary" onclick="exportCards('text')">
+                        📝 Export Text
+                    </button>
+                    <button class="btn-secondary" onclick="printCards()">
+                        🖨️ Print
+                    </button>
+                </div>
+            </div>
+
+            <div class="filter-section">
+                <label>
+                    Filter by importance:
+                    <select id="importanceFilter" onchange="filterCards()">
+                        <option value="all">All Cards</option>
+                        <option value="high">High Priority</option>
+                        <option value="medium">Medium Priority</option>
+                        <option value="low">Low Priority</option>
+                    </select>
+                </label>
+            </div>
+
+            <div id="cards" class="cards-grid"></div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <script>
+        function updateCredits() {
+            const numCards = document.getElementById('numCards').value;
+            const creditsNeeded = Math.max(1, Math.floor(numCards / 5));
+            document.getElementById('cardsNum').textContent = numCards;
+            document.getElementById('creditsNeeded').textContent = creditsNeeded;
+        }
+
+        function updateCreditsText() {
+            const numCards = document.getElementById('numCardsText').value;
+            const creditsNeeded = Math.max(1, Math.floor(numCards / 5));
+            document.getElementById('cardsNumText').textContent = numCards;
+            document.getElementById('creditsNeededText').textContent = creditsNeeded;
+        }
+
+        // Update credits display after card generation
+        function updateCreditsDisplay(credits) {
+            document.querySelector('.credits-display').textContent = `💎 ${credits} Credits`;
+        }
+
+        // Initialize
+        updateCredits();
+        updateCreditsText();
+    </script>
+</body>
+</html>

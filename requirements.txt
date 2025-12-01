@@ -1,0 +1,6 @@
+flask
+flask-sqlalchemy
+openai
+PyPDF2
+werkzeug
+stripe
