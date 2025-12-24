@@ -1,7 +1,7 @@
 const express = require('express');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { User, Transaction } = require('../models');
-const authMiddleware = require('../middleware/auth');
+const { isAuthenticated } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -19,7 +19,7 @@ router.get('/packages', (req, res) => {
 });
 
 // Create payment intent
-router.post('/create-intent', authMiddleware, async (req, res) => {
+router.post('/create-intent', isAuthenticated, async (req, res) => {
     try {
         const { packageName } = req.body;
 
@@ -50,7 +50,7 @@ router.post('/create-intent', authMiddleware, async (req, res) => {
 });
 
 // Confirm payment
-router.post('/confirm', authMiddleware, async (req, res) => {
+router.post('/confirm', isAuthenticated, async (req, res) => {
     try {
         const { paymentIntentId, packageName } = req.body;
 

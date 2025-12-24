@@ -115,6 +115,12 @@ CardGeneration.belongsTo(User, { foreignKey: 'userId' });
 
 // Sync database
 const syncDatabase = async () => {
+    // Skip SQLite sync if using MongoDB
+    if (process.env.DB_TYPE === 'mongodb') {
+        console.log('ℹ️  Using MongoDB - Skipping SQLite sync');
+        return;
+    }
+    
     try {
         await sequelize.sync({ alter: true });
         console.log('✅ Database synchronized');

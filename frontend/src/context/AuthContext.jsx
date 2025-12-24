@@ -20,14 +20,14 @@ export const AuthProvider = ({ children }) => {
       const response = await axios.get(`${API_URL}/auth/status`, {
         withCredentials: true
       });
-      if (response.data.authenticated) {
-        const userInfo = await axios.get(`${API_URL}/user/info`, {
-          withCredentials: true
-        });
-        setUser(userInfo.data.user);
+      if (response.data.authenticated && response.data.user) {
+        setUser(response.data.user);
+      } else {
+        setUser(null);
       }
     } catch (error) {
       console.error('Auth check failed:', error);
+      setUser(null);
     } finally {
       setLoading(false);
     }
@@ -60,6 +60,10 @@ export const AuthProvider = ({ children }) => {
     setUser(prev => ({ ...prev, credits: newCredits }));
   };
 
+  const refreshUser = async () => {
+    await checkAuth();
+  };
+
   return (
     <AuthContext.Provider value={{ 
       user, 
@@ -68,6 +72,7 @@ export const AuthProvider = ({ children }) => {
       register, 
       logout, 
       updateCredits,
+      refreshUser,
       API_URL 
     }}>
       {children}

@@ -1,11 +1,11 @@
 const express = require('express');
 const { User, Transaction } = require('../models');
-const authMiddleware = require('../middleware/auth');
+const { isAuthenticated } = require('../middleware/auth');
 
 const router = express.Router();
 
 // Get user info
-router.get('/info', authMiddleware, async (req, res) => {
+router.get('/info', isAuthenticated, async (req, res) => {
     try {
         const user = await User.findByPk(req.session.userId, {
             attributes: ['id', 'username', 'email', 'credits', 'createdAt']
@@ -23,7 +23,7 @@ router.get('/info', authMiddleware, async (req, res) => {
 });
 
 // Get transactions
-router.get('/transactions', authMiddleware, async (req, res) => {
+router.get('/transactions', isAuthenticated, async (req, res) => {
     try {
         const transactions = await Transaction.findAll({
             where: { userId: req.session.userId },

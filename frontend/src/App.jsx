@@ -4,6 +4,7 @@ import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Pricing from './pages/Pricing';
 import Transactions from './pages/Transactions';
+import AdminPanel from './pages/AdminPanel';
 import { AuthProvider } from './context/AuthContext';
 import './App.css';
 
@@ -17,6 +18,7 @@ function App() {
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/pricing" element={<Pricing />} />
           <Route path="/transactions" element={<Transactions />} />
+          <Route path="/admin" element={<AdminPanel />} />
           <Route path="/" element={<Navigate to="/dashboard" />} />
         </Routes>
       </Router>
