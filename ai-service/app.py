@@ -23,11 +23,42 @@ client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 # For Windows: Download from https://github.com/UB-Mannheim/tesseract/wiki
 # Set path or add to system PATH
 try:
-    # Try default locations
-    if os.path.exists(r'C:\Program Files\Tesseract-OCR\tesseract.exe'):
-        pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-    elif os.path.exists(r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe'):
-        pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe'
+    # Try conda environment first
+    conda_prefix = os.environ.get('CONDA_PREFIX', '')
+    conda_tesseract_paths = [
+        os.path.join(conda_prefix, 'Library', 'bin', 'tesseract.exe') if conda_prefix else None,
+        r'C:\Users\HP\miniforge3\Library\bin\tesseract.exe',
+        r'C:\ProgramData\miniforge3\Library\bin\tesseract.exe',
+        r'C:\Users\HP\anaconda3\Library\bin\tesseract.exe',
+        r'C:\ProgramData\anaconda3\Library\bin\tesseract.exe',
+    ]
+    
+    # Try standalone installations
+    standalone_paths = [
+        r'C:\Program Files\Tesseract-OCR\tesseract.exe',
+        r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe'
+    ]
+    
+    all_paths = [p for p in conda_tesseract_paths if p] + standalone_paths
+    
+    tesseract_found = False
+    for path in all_paths:
+        if os.path.exists(path):
+            pytesseract.pytesseract.tesseract_cmd = path
+            print(f"✅ Found Tesseract at: {path}")
+            
+            # Set TESSDATA_PREFIX for conda installation
+            tessdata_dir = os.path.join(os.path.dirname(path), '..', 'share', 'tessdata')
+            if os.path.exists(tessdata_dir):
+                os.environ['TESSDATA_PREFIX'] = os.path.abspath(tessdata_dir)
+                print(f"✅ Set TESSDATA_PREFIX to: {os.environ['TESSDATA_PREFIX']}")
+            
+            tesseract_found = True
+            break
+    
+    if not tesseract_found:
+        print("⚠️  Warning: Tesseract not found in common locations")
+        print("Please install Tesseract OCR: https://github.com/UB-Mannheim/tesseract/wiki")
 except Exception as e:
     print(f"Warning: Tesseract path not set: {e}")
     print("Please install Tesseract OCR: https://github.com/UB-Mannheim/tesseract/wiki")
@@ -333,7 +364,7 @@ Content to analyze:
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.5,
-                max_tokens=4000
+                max_tokens=16000  # Increased from 4000 to handle 10 detailed cards
             )
             
             result = response.choices[0].message.content.strip()
