@@ -115,9 +115,9 @@ CardGeneration.belongsTo(User, { foreignKey: 'userId' });
 
 // Sync database
 const syncDatabase = async () => {
-    // Skip SQLite sync if using MongoDB
-    if (process.env.DB_TYPE === 'mongodb') {
-        console.log('ℹ️  Using MongoDB - Skipping SQLite sync');
+    // Skip SQLite sync if using MongoDB or Postgres (Prisma will manage schema)
+    if (process.env.DB_TYPE === 'mongodb' || process.env.DB_TYPE === 'postgres' || process.env.DB_TYPE === 'postgresql' || process.env.DB_TYPE === 'prisma') {
+        console.log('ℹ️  Using alternative DB - Skipping SQLite sync');
         return;
     }
     

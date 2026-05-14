@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "init-db": "node scripts/initDb.js"
+    "init-db": "node scripts/initDb.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev --name init"
   },
   "keywords": [
     "card",
@@ -18,7 +20,7 @@
   "license": "MIT",
   "dependencies": {
     "axios": "^1.6.2",
-    "bcrypt": "^5.1.1",
+    "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
@@ -26,10 +28,12 @@
     "form-data": "^4.0.5",
     "helmet": "^7.1.0",
     "mongoose": "^8.20.1",
+    "@prisma/client": "^5.12.0",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
+    "prisma": "^5.12.0",
     "sequelize": "^6.35.2",
-    "sqlite3": "^5.1.6",
+    "sqlite3": "^6.0.1",
     "stripe": "^14.8.0"
   },
   "devDependencies": {

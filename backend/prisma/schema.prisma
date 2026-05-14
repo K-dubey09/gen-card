@@ -1,0 +1,77 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id         Int      @id @default(autoincrement())
+  username   String   @unique
+  email      String   @unique
+  password   String
+  credits    Int      @default(10)
+  role       String   @default("user")
+  isActive   Boolean  @default(true)
+  lastLogin  DateTime?
+  avatar     String?
+  preferences Json?
+  sessions   Session[]
+  documents  Document[]
+  transactions Transaction[]
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model Session {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  user         User     @relation(fields: [userId], references: [id])
+  title        String
+  topic        String?
+  cards        Json
+  roadmap      Json?
+  sourceType   String
+  sourceFileName String?
+  creditsUsed  Int      @default(0)
+  tags         Json?
+  isFavorite   Boolean  @default(false)
+  viewCount    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Document {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  user         User     @relation(fields: [userId], references: [id])
+  fileName     String
+  originalName String
+  fileType     String
+  fileSize     Int
+  filePath     String
+  description  String?
+  tags         Json?
+  category     String?
+  isProcessed  Boolean  @default(false)
+  sessionCount Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Transaction {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id])
+  type        String
+  amount      Float
+  credits     Int
+  description String?
+  paymentId   String?
+  status      String   @default("completed")
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

@@ -7,6 +7,7 @@ const axios = require('axios');
 require('dotenv').config();
 
 const connectDB = require('./config/database');
+const { connectPrisma } = require('./config/database_prisma');
 const authRoutes = require('./routes/auth');
 const authMongoRoutes = require('./routes/authMongo');
 const cardRoutes = require('./routes/cards');
@@ -24,6 +25,9 @@ const app = express();
 const dbType = process.env.DB_TYPE || 'mongodb';
 if (dbType === 'mongodb') {
   connectDB();
+} else if (dbType === 'postgres' || dbType === 'postgresql' || dbType === 'prisma') {
+    // Initialize Prisma connection for PostgreSQL
+    connectPrisma();
 }
 
 // Middleware
