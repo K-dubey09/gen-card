@@ -1,4 +1,4 @@
-const User = require('../models/mongodb/User');
+const prisma = require('../prismaClient');
 
 // Authentication middleware
 const isAuthenticated = async (req, res, next) => {
@@ -10,30 +10,22 @@ const isAuthenticated = async (req, res, next) => {
     }
 
     try {
-        // For MongoDB, attach full user object
-        if (process.env.DB_TYPE === 'mongodb') {
-            const user = await User.findById(req.session.userId).select('-password');
-            if (!user) {
-                return res.status(401).json({ error: 'User not found' });
-            }
-            if (!user.isActive) {
-                return res.status(403).json({ error: 'Account is deactivated' });
-            }
-            req.user = {
-                id: user._id.toString(),
-                username: user.username,
-                email: user.email,
-                role: user.role,
-                credits: user.credits,
-                isActive: user.isActive
-            };
-        } else {
-            // For SQLite, use session data
-            req.user = {
-                id: req.session.userId,
-                username: req.session.username
-            };
+        const id = parseInt(req.session.userId, 10);
+        const user = await prisma.user.findUnique({ where: { id } });
+        if (!user) {
+            return res.status(401).json({ error: 'User not found' });
         }
+        if (!user.isActive) {
+            return res.status(403).json({ error: 'Account is deactivated' });
+        }
+        req.user = {
+            id: user.id.toString(),
+            username: user.username,
+            email: user.email,
+            role: user.role,
+            credits: user.credits,
+            isActive: user.isActive
+        };
         next();
     } catch (error) {
         console.error('Auth middleware error:', error);

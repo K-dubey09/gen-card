@@ -31,7 +31,7 @@ pip install -r requirements.txt
 The `.env` file is already created with your OpenAI API key. Update the Stripe keys:
 
 ```env
-OPENAI_API_KEY=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
+OPENAI_API_KEY="your openai api key here"
 SECRET_KEY=your-random-secret-key-here
 STRIPE_SECRET_KEY=sk_test_your_key_here
 STRIPE_PUBLISHABLE_KEY=pk_test_your_key_here

@@ -91,7 +91,7 @@ A **full-featured card maker application** with:
 
 ### OpenAI API Key (✅ Included)
 ```
-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
+you need to create your open ai api key first
 ```
 ✅ Already configured in `.env` and `app.py`
 

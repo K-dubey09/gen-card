@@ -82,7 +82,7 @@ VITE_STRIPE_PUBLISHABLE_KEY=pk_test_your_key
 
 #### AI Service (.env)
 ```env
-OPENAI_API_KEY=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
+OPENAI_API_KEY="put your open ai api key"
 ```
 
 ### 3. Start All Services

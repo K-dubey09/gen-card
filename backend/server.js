@@ -6,29 +6,23 @@ const session = require('express-session');
 const axios = require('axios');
 require('dotenv').config();
 
-const connectDB = require('./config/database');
 const { connectPrisma } = require('./config/database_prisma');
-const authRoutes = require('./routes/auth');
-const authMongoRoutes = require('./routes/authMongo');
+const authPrismaRoutes = require('./routes/authPrisma');
 const cardRoutes = require('./routes/cards');
 const paymentRoutes = require('./routes/payment');
 const userRoutes = require('./routes/user');
 const roadmapRoutes = require('./routes/roadmap');
-const sessionsRoutes = require('./routes/sessions');
-const documentsRoutes = require('./routes/documents');
+const sessionsPrismaRoutes = require('./routes/sessionsPrisma');
+const documentsPrismaRoutes = require('./routes/documentsPrisma');
 const adminRoutes = require('./routes/admin');
 const { syncDatabase } = require('./models');
 
 const app = express();
 
-// Connect to MongoDB
-const dbType = process.env.DB_TYPE || 'mongodb';
-if (dbType === 'mongodb') {
-  connectDB();
-} else if (dbType === 'postgres' || dbType === 'postgresql' || dbType === 'prisma') {
-    // Initialize Prisma connection for PostgreSQL
-    connectPrisma();
-}
+const dbType = process.env.DB_TYPE || 'postgres';
+
+// Connect to PostgreSQL via Prisma
+connectPrisma();
 
 // Middleware
 app.use(helmet());
@@ -88,13 +82,13 @@ app.use(session({
 }));
 
 // Routes
-app.use('/api/auth', dbType === 'mongodb' ? authMongoRoutes : authRoutes);
+app.use('/api/auth', authPrismaRoutes);
 app.use('/api/cards', cardRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/roadmap', roadmapRoutes);
-app.use('/api/sessions', sessionsRoutes);
-app.use('/api/documents', documentsRoutes);
+app.use('/api/sessions', sessionsPrismaRoutes);
+app.use('/api/documents', documentsPrismaRoutes);
 app.use('/api/admin', adminRoutes);
 
 // Debug endpoint: returns the request Origin header and some headers for CORS troubleshooting

@@ -1,7 +1,13 @@
 const express = require('express');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-const { User, Transaction } = require('../models');
 const { isAuthenticated } = require('../middleware/auth');
+const prisma = require('../prismaClient');
+let SequelizeUser, SequelizeTransaction;
+if (process.env.DB_TYPE !== 'mongodb' && process.env.DB_TYPE !== 'postgres' && process.env.DB_TYPE !== 'postgresql' && process.env.DB_TYPE !== 'prisma') {
+    const models = require('../models');
+    SequelizeUser = models.User;
+    SequelizeTransaction = models.Transaction;
+}
 
 const router = express.Router();
 
@@ -66,26 +72,37 @@ router.post('/confirm', isAuthenticated, async (req, res) => {
         }
 
         const packageInfo = CREDIT_PACKAGES[packageName];
-        const user = await User.findByPk(req.session.userId);
+        let user;
+        if (process.env.DB_TYPE === 'postgres' || process.env.DB_TYPE === 'postgresql' || process.env.DB_TYPE === 'prisma') {
+            user = await prisma.user.findUnique({ where: { id: parseInt(req.session.userId, 10) } });
+            if (!user) return res.status(404).json({ error: 'User not found' });
 
-        // Add credits
-        user.credits += packageInfo.credits;
-        await user.save();
+            const updated = await prisma.user.update({ where: { id: user.id }, data: { credits: { increment: CREDIT_PACKAGES[packageName].credits } } });
+            await prisma.transaction.create({
+                data: {
+                    userId: updated.id,
+                    type: 'purchase',
+                    amount: CREDIT_PACKAGES[packageName].credits,
+                    credits: CREDIT_PACKAGES[packageName].credits,
+                    description: `Purchased ${packageName} package`,
+                    paymentId: paymentIntentId
+                }
+            });
 
-        // Record transaction
-        await Transaction.create({
-            userId: user.id,
-            type: 'purchase',
-            amount: packageInfo.credits,
-            description: `Purchased ${packageName} package`,
-            paymentId: paymentIntentId
-        });
-
-        res.json({
-            success: true,
-            creditsAdded: packageInfo.credits,
-            totalCredits: user.credits
-        });
+            res.json({ success: true, creditsAdded: CREDIT_PACKAGES[packageName].credits, totalCredits: updated.credits });
+        } else {
+            user = await SequelizeUser.findByPk(req.session.userId);
+            user.credits += CREDIT_PACKAGES[packageName].credits;
+            await user.save();
+            await SequelizeTransaction.create({
+                userId: user.id,
+                type: 'purchase',
+                amount: CREDIT_PACKAGES[packageName].credits,
+                description: `Purchased ${packageName} package`,
+                paymentId: paymentIntentId
+            });
+            res.json({ success: true, creditsAdded: CREDIT_PACKAGES[packageName].credits, totalCredits: user.credits });
+        }
     } catch (error) {
         console.error('Payment confirmation error:', error);
         res.status(500).json({ error: 'Failed to confirm payment' });

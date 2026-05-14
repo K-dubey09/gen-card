@@ -4,18 +4,15 @@ const axios = require('axios');
 const FormData = require('form-data');
 const fs = require('fs');
 const { isAuthenticated } = require('../middleware/auth');
+const prisma = require('../prismaClient');
 
 // Import MongoDB models if using MongoDB
-let User, Transaction, Session, Document;
+let MUser, MTransaction, MSession, MDocument;
 if (process.env.DB_TYPE === 'mongodb') {
-    User = require('../models/mongodb/User');
-    Transaction = require('../models/mongodb/Transaction');
-    Session = require('../models/mongodb/Session');
-    Document = require('../models/mongodb/Document');
-} else {
-    const models = require('../models');
-    User = models.User;
-    Transaction = models.Transaction;
+    MUser = require('../models/mongodb/User');
+    MTransaction = require('../models/mongodb/Transaction');
+    MSession = require('../models/mongodb/Session');
+    MDocument = require('../models/mongodb/Document');
 }
 
 const router = express.Router();
@@ -62,9 +59,12 @@ router.post('/generate-from-file', isAuthenticated, upload.single('file'), async
         // Get user based on database type
         let user;
         if (process.env.DB_TYPE === 'mongodb') {
-            user = await User.findById(req.user.id);
+            user = await MUser.findById(req.user.id);
+        } else if (process.env.DB_TYPE === 'postgres' || process.env.DB_TYPE === 'postgresql' || process.env.DB_TYPE === 'prisma') {
+            user = await prisma.user.findUnique({ where: { id: parseInt(req.session.userId, 10) } });
         } else {
-            user = await User.findByPk(req.session.userId);
+            const models = require('../models');
+            user = await models.User.findByPk(req.session.userId);
         }
 
         if (!user) {
@@ -107,14 +107,11 @@ router.post('/generate-from-file', isAuthenticated, upload.single('file'), async
 
         // Deduct credits (skip for admin)
         if (user.role !== 'admin') {
-            user.credits -= creditsNeeded;
-            await user.save();
-        }
-
-        // Record transaction (skip for admin)
-        if (user.role !== 'admin') {
             if (process.env.DB_TYPE === 'mongodb') {
-                await Transaction.create({
+                user.credits -= creditsNeeded;
+                await user.save();
+
+                await MTransaction.create({
                     userId: user._id,
                     type: 'credit_usage',
                     amount: 0,
@@ -126,7 +123,21 @@ router.post('/generate-from-file', isAuthenticated, upload.single('file'), async
                         fileName: file.originalname
                     }
                 });
+            } else if (process.env.DB_TYPE === 'postgres' || process.env.DB_TYPE === 'postgresql' || process.env.DB_TYPE === 'prisma') {
+                const updatedUser = await prisma.user.update({ where: { id: user.id }, data: { credits: { decrement: creditsNeeded } } });
+                await prisma.transaction.create({
+                    data: {
+                        userId: updatedUser.id,
+                        type: 'usage',
+                        amount: -creditsNeeded,
+                        credits: -creditsNeeded,
+                        description: `Generated ${cards.length} cards from ${file.originalname}`
+                    }
+                });
+                user = updatedUser;
             } else {
+                user.credits -= creditsNeeded;
+                await user.save();
                 await Transaction.create({
                     userId: user.id,
                     type: 'usage',
@@ -162,9 +173,12 @@ router.post('/generate-from-text', isAuthenticated, async (req, res) => {
         // Get user based on database type
         let user;
         if (process.env.DB_TYPE === 'mongodb') {
-            user = await User.findById(req.user.id);
+            user = await MUser.findById(req.user.id);
+        } else if (process.env.DB_TYPE === 'postgres' || process.env.DB_TYPE === 'postgresql' || process.env.DB_TYPE === 'prisma') {
+            user = await prisma.user.findUnique({ where: { id: parseInt(req.session.userId, 10) } });
         } else {
-            user = await User.findByPk(req.session.userId);
+            const models = require('../models');
+            user = await models.User.findByPk(req.session.userId);
         }
 
         if (!user) {
@@ -245,26 +259,37 @@ router.post('/generate-from-document', isAuthenticated, async (req, res) => {
             return res.status(400).json({ error: 'Document ID is required' });
         }
 
-        // Only MongoDB supports documents
-        if (process.env.DB_TYPE !== 'mongodb') {
-            return res.status(400).json({ error: 'Document generation requires MongoDB' });
-        }
+        // Get user and document based on DB type
+        let document;
+        if (process.env.DB_TYPE === 'mongodb') {
+            // Get user
+            const mUser = await MUser.findById(req.user.id);
+            if (!mUser) return res.status(404).json({ error: 'User not found' });
 
-        // Get user
-        const user = await User.findById(req.user.id);
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
+            // Get document
+            document = await MDocument.findById(documentId);
+            if (!document) return res.status(404).json({ error: 'Document not found' });
 
-        // Get document
-        const document = await Document.findById(documentId);
-        if (!document) {
-            return res.status(404).json({ error: 'Document not found' });
-        }
+            if (document.userId.toString() !== mUser._id.toString()) return res.status(403).json({ error: 'Access denied to this document' });
+            user = mUser;
+        } else if (process.env.DB_TYPE === 'postgres' || process.env.DB_TYPE === 'postgresql' || process.env.DB_TYPE === 'prisma') {
+            const pUser = await prisma.user.findUnique({ where: { id: parseInt(req.session.userId, 10) } });
+            if (!pUser) return res.status(404).json({ error: 'User not found' });
 
-        // Verify document belongs to user
-        if (document.userId.toString() !== user._id.toString()) {
-            return res.status(403).json({ error: 'Access denied to this document' });
+            document = await prisma.document.findUnique({ where: { id: parseInt(documentId, 10) } });
+            if (!document) return res.status(404).json({ error: 'Document not found' });
+
+            if (document.userId !== pUser.id) return res.status(403).json({ error: 'Access denied to this document' });
+            user = pUser;
+        } else {
+            const models = require('../models');
+            const sUser = await models.User.findByPk(req.session.userId);
+            if (!sUser) return res.status(404).json({ error: 'User not found' });
+            const sDoc = await models.Document.findByPk(documentId);
+            if (!sDoc) return res.status(404).json({ error: 'Document not found' });
+            if (sDoc.userId !== sUser.id) return res.status(403).json({ error: 'Access denied to this document' });
+            document = sDoc;
+            user = sUser;
         }
 
         const creditsNeeded = calculateCredits(parseInt(numCards));
@@ -309,27 +334,57 @@ router.post('/generate-from-document', isAuthenticated, async (req, res) => {
 
         const cards = aiResponse.data.cards;
 
-        // Deduct credits (skip for admin)
+        // Deduct credits and record transaction (skip for admin)
         if (user.role !== 'admin') {
-            user.credits -= creditsNeeded;
-            await user.save();
-        }
-
-        // Record transaction (skip for admin)
-        if (user.role !== 'admin') {
-            await Transaction.create({
-                userId: user._id,
-                type: 'credit_usage',
-                amount: 0,
-                credits: -creditsNeeded,
-                status: 'completed',
-                metadata: {
-                    description: `Generated ${cards.length} cards from document: ${document.originalName || document.fileName}`,
-                    cardsGenerated: cards.length,
-                    documentId: document._id,
-                    fileName: document.originalName || document.fileName
-                }
-            });
+            if (process.env.DB_TYPE === 'mongodb') {
+                user.credits -= creditsNeeded;
+                await user.save();
+                await MTransaction.create({
+                    userId: user._id,
+                    type: 'credit_usage',
+                    amount: 0,
+                    credits: -creditsNeeded,
+                    status: 'completed',
+                    metadata: {
+                        description: `Generated ${cards.length} cards from document: ${document.originalName || document.fileName}`,
+                        cardsGenerated: cards.length,
+                        documentId: document._id,
+                        fileName: document.originalName || document.fileName
+                    }
+                });
+            } else if (process.env.DB_TYPE === 'postgres' || process.env.DB_TYPE === 'postgresql' || process.env.DB_TYPE === 'prisma') {
+                const updatedUser = await prisma.user.update({ where: { id: user.id }, data: { credits: { decrement: creditsNeeded } } });
+                await prisma.transaction.create({
+                    data: {
+                        userId: updatedUser.id,
+                        type: 'usage',
+                        amount: -creditsNeeded,
+                        credits: -creditsNeeded,
+                        metadata: {
+                            description: `Generated ${cards.length} cards from document: ${document.originalName || document.fileName}`,
+                            documentId: document.id,
+                            fileName: document.originalName || document.fileName
+                        }
+                    }
+                });
+                user = updatedUser;
+            } else {
+                user.credits -= creditsNeeded;
+                await user.save();
+                await Transaction.create({
+                    userId: user._id,
+                    type: 'credit_usage',
+                    amount: 0,
+                    credits: -creditsNeeded,
+                    status: 'completed',
+                    metadata: {
+                        description: `Generated ${cards.length} cards from document: ${document.originalName || document.fileName}`,
+                        cardsGenerated: cards.length,
+                        documentId: document._id,
+                        fileName: document.originalName || document.fileName
+                    }
+                });
+            }
         }
 
         res.json({
