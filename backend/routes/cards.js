@@ -58,13 +58,14 @@ router.post('/generate-from-file', isAuthenticated, upload.single('file'), async
 
         // Get user based on database type
         let user;
+        const userId = req.user.id;
         if (process.env.DB_TYPE === 'mongodb') {
-            user = await MUser.findById(req.user.id);
+            user = await MUser.findById(userId);
         } else if (process.env.DB_TYPE === 'postgres' || process.env.DB_TYPE === 'postgresql' || process.env.DB_TYPE === 'prisma') {
-            user = await prisma.user.findUnique({ where: { id: parseInt(req.session.userId, 10) } });
+            user = await prisma.user.findUnique({ where: { id: userId } });
         } else {
             const models = require('../models');
-            user = await models.User.findByPk(req.session.userId);
+            user = await models.User.findByPk(userId);
         }
 
         if (!user) {
@@ -72,9 +73,10 @@ router.post('/generate-from-file', isAuthenticated, upload.single('file'), async
         }
 
         const creditsNeeded = calculateCredits(parseInt(numCards));
+        const isUnlimited = user.role === 'admin' || user.isUnlimited;
 
         // Check credits
-        if (user.credits < creditsNeeded) {
+        if (!isUnlimited && user.credits < creditsNeeded) {
             return res.status(400).json({
                 error: `Insufficient credits. Need ${creditsNeeded}, you have ${user.credits}`,
                 showRecharge: true
@@ -105,8 +107,8 @@ router.post('/generate-from-file', isAuthenticated, upload.single('file'), async
         // Clean up uploaded file
         fs.unlinkSync(file.path);
 
-        // Deduct credits (skip for admin)
-        if (user.role !== 'admin') {
+        // Deduct credits (skip for admin/unlimited)
+        if (!isUnlimited) {
             if (process.env.DB_TYPE === 'mongodb') {
                 user.credits -= creditsNeeded;
                 await user.save();
@@ -150,7 +152,7 @@ router.post('/generate-from-file', isAuthenticated, upload.single('file'), async
         res.json({
             success: true,
             cards,
-            creditsUsed: user.role === 'admin' ? 0 : creditsNeeded,
+            creditsUsed: isUnlimited ? 0 : creditsNeeded,
             creditsRemaining: user.credits
         });
     } catch (error) {
@@ -172,13 +174,14 @@ router.post('/generate-from-text', isAuthenticated, async (req, res) => {
 
         // Get user based on database type
         let user;
+        const userId = req.user.id;
         if (process.env.DB_TYPE === 'mongodb') {
-            user = await MUser.findById(req.user.id);
+            user = await MUser.findById(userId);
         } else if (process.env.DB_TYPE === 'postgres' || process.env.DB_TYPE === 'postgresql' || process.env.DB_TYPE === 'prisma') {
-            user = await prisma.user.findUnique({ where: { id: parseInt(req.session.userId, 10) } });
+            user = await prisma.user.findUnique({ where: { id: userId } });
         } else {
             const models = require('../models');
-            user = await models.User.findByPk(req.session.userId);
+            user = await models.User.findByPk(userId);
         }
 
         if (!user) {
@@ -186,9 +189,10 @@ router.post('/generate-from-text', isAuthenticated, async (req, res) => {
         }
 
         const creditsNeeded = calculateCredits(parseInt(numCards));
+        const isUnlimited = user.role === 'admin' || user.isUnlimited;
 
         // Check credits (skip for admin)
-        if (user.role !== 'admin' && user.credits < creditsNeeded) {
+        if (!isUnlimited && user.credits < creditsNeeded) {
             return res.status(400).json({
                 error: `Insufficient credits. Need ${creditsNeeded}, you have ${user.credits}`,
                 showRecharge: true
@@ -204,14 +208,14 @@ router.post('/generate-from-text', isAuthenticated, async (req, res) => {
 
         const cards = aiResponse.data.cards;
 
-        // Deduct credits (skip for admin)
-        if (user.role !== 'admin') {
+        // Deduct credits (skip for admin/unlimited)
+        if (!isUnlimited) {
             user.credits -= creditsNeeded;
             await user.save();
         }
 
         // Record transaction (skip for admin)
-        if (user.role !== 'admin') {
+        if (!isUnlimited) {
             if (process.env.DB_TYPE === 'mongodb') {
                 await Transaction.create({
                     userId: user._id,
@@ -238,7 +242,7 @@ router.post('/generate-from-text', isAuthenticated, async (req, res) => {
         res.json({
             success: true,
             cards,
-            creditsUsed: user.role === 'admin' ? 0 : creditsNeeded,
+            creditsUsed: isUnlimited ? 0 : creditsNeeded,
             creditsRemaining: user.credits
         });
     } catch (error) {
@@ -261,9 +265,10 @@ router.post('/generate-from-document', isAuthenticated, async (req, res) => {
 
         // Get user and document based on DB type
         let document;
+        const userId = req.user.id;
         if (process.env.DB_TYPE === 'mongodb') {
             // Get user
-            const mUser = await MUser.findById(req.user.id);
+            const mUser = await MUser.findById(userId);
             if (!mUser) return res.status(404).json({ error: 'User not found' });
 
             // Get document
@@ -273,7 +278,7 @@ router.post('/generate-from-document', isAuthenticated, async (req, res) => {
             if (document.userId.toString() !== mUser._id.toString()) return res.status(403).json({ error: 'Access denied to this document' });
             user = mUser;
         } else if (process.env.DB_TYPE === 'postgres' || process.env.DB_TYPE === 'postgresql' || process.env.DB_TYPE === 'prisma') {
-            const pUser = await prisma.user.findUnique({ where: { id: parseInt(req.session.userId, 10) } });
+            const pUser = await prisma.user.findUnique({ where: { id: userId } });
             if (!pUser) return res.status(404).json({ error: 'User not found' });
 
             document = await prisma.document.findUnique({ where: { id: parseInt(documentId, 10) } });
@@ -283,7 +288,7 @@ router.post('/generate-from-document', isAuthenticated, async (req, res) => {
             user = pUser;
         } else {
             const models = require('../models');
-            const sUser = await models.User.findByPk(req.session.userId);
+            const sUser = await models.User.findByPk(userId);
             if (!sUser) return res.status(404).json({ error: 'User not found' });
             const sDoc = await models.Document.findByPk(documentId);
             if (!sDoc) return res.status(404).json({ error: 'Document not found' });
@@ -293,9 +298,10 @@ router.post('/generate-from-document', isAuthenticated, async (req, res) => {
         }
 
         const creditsNeeded = calculateCredits(parseInt(numCards));
+        const isUnlimited = user.role === 'admin' || user.isUnlimited;
 
         // Check credits (skip for admin)
-        if (user.role !== 'admin' && user.credits < creditsNeeded) {
+        if (!isUnlimited && user.credits < creditsNeeded) {
             return res.status(400).json({
                 error: `Insufficient credits. Need ${creditsNeeded}, you have ${user.credits}`,
                 showRecharge: true
@@ -334,8 +340,8 @@ router.post('/generate-from-document', isAuthenticated, async (req, res) => {
 
         const cards = aiResponse.data.cards;
 
-        // Deduct credits and record transaction (skip for admin)
-        if (user.role !== 'admin') {
+        // Deduct credits and record transaction (skip for admin/unlimited)
+        if (!isUnlimited) {
             if (process.env.DB_TYPE === 'mongodb') {
                 user.credits -= creditsNeeded;
                 await user.save();
@@ -390,7 +396,7 @@ router.post('/generate-from-document', isAuthenticated, async (req, res) => {
         res.json({
             success: true,
             cards,
-            creditsUsed: user.role === 'admin' ? 0 : creditsNeeded,
+            creditsUsed: isUnlimited ? 0 : creditsNeeded,
             creditsRemaining: user.credits,
             documentId: document._id
         });

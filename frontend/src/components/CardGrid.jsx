@@ -1,9 +1,18 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import './CardGrid.css';
 
 function CardGrid({ cards }) {
   const [filter, setFilter] = useState('all');
   const [selectedCard, setSelectedCard] = useState(null);
+  const [fullscreenImage, setFullscreenImage] = useState(null);
+
+  useEffect(() => {
+    document.body.style.overflow = selectedCard !== null || fullscreenImage ? 'hidden' : '';
+
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [selectedCard, fullscreenImage]);
 
   const filteredCards = filter === 'all' 
     ? cards 
@@ -50,6 +59,17 @@ function CardGrid({ cards }) {
     return colorMap[color] || 'card-blue';
   };
 
+  const openFullscreenImage = (card) => {
+    const imageUrl = card?.imageUrl || card?.fallbackImageUrl;
+    if (imageUrl) {
+      setFullscreenImage(imageUrl);
+    }
+  };
+
+  const closeFullscreenImage = () => {
+    setFullscreenImage(null);
+  };
+
   return (
     <div className="card-grid-container">
       <div className="card-controls">
@@ -94,6 +114,10 @@ function CardGrid({ cards }) {
                   className="card-image"
                   onError={(e) => {
                     console.log('Image failed to load:', card.imageUrl);
+                    if (card.fallbackImageUrl && e.target.src !== card.fallbackImageUrl) {
+                      e.target.src = card.fallbackImageUrl;
+                      return;
+                    }
                     e.target.style.display = 'none';
                   }}
                   onLoad={(e) => {
@@ -155,53 +179,89 @@ function CardGrid({ cards }) {
       {selectedCard !== null && (
         <div className="card-overlay" onClick={() => setSelectedCard(null)}>
           <div className="card-modal" onClick={(e) => e.stopPropagation()}>
-            <button className="modal-close" onClick={() => setSelectedCard(null)}>×</button>
+            <button className="modal-close" onClick={() => setSelectedCard(null)} aria-label="Close card">×</button>
             <div className={`modal-content ${getColorClass(filteredCards[selectedCard]?.color)}`}>
               {filteredCards[selectedCard]?.imageUrl && (
-                <div className="modal-image-container">
+                <button
+                  type="button"
+                  className="modal-image-container"
+                  onClick={() => openFullscreenImage(filteredCards[selectedCard])}
+                  aria-label="Open image fullscreen"
+                >
                   <img 
                     src={filteredCards[selectedCard].imageUrl} 
                     alt={filteredCards[selectedCard].title}
                     className="modal-image"
-                    onError={(e) => e.target.style.display = 'none'}
+                    onError={(e) => {
+                      const fallbackImageUrl = filteredCards[selectedCard]?.fallbackImageUrl;
+                      if (fallbackImageUrl && e.target.src !== fallbackImageUrl) {
+                        e.target.src = fallbackImageUrl;
+                        return;
+                      }
+                      e.target.style.display = 'none';
+                    }}
                   />
-                </div>
+                </button>
               )}
-              
-              <div className="modal-header">
-                <h2>{filteredCards[selectedCard]?.title}</h2>
-                <span className="modal-category">{filteredCards[selectedCard]?.category}</span>
-              </div>
-              
-              {filteredCards[selectedCard]?.summary && (
-                <div className="modal-summary">
-                  <strong>Summary:</strong> {filteredCards[selectedCard].summary}
+
+              <div className="modal-scroll">
+                <div className="modal-header">
+                  <h2>{filteredCards[selectedCard]?.title}</h2>
+                  <span className="modal-category">{filteredCards[selectedCard]?.category}</span>
                 </div>
-              )}
-              
-              {filteredCards[selectedCard]?.keyPoints && (
-                <div className="modal-key-points">
-                  <h3>🔑 Key Points</h3>
-                  <ul>
-                    {filteredCards[selectedCard].keyPoints.map((point, idx) => (
-                      <li key={idx}>{point}</li>
-                    ))}
-                  </ul>
+                
+                {filteredCards[selectedCard]?.summary && (
+                  <div className="modal-summary">
+                    <strong>Summary:</strong> {filteredCards[selectedCard].summary}
+                  </div>
+                )}
+                
+                {filteredCards[selectedCard]?.keyPoints && (
+                  <div className="modal-key-points">
+                    <h3>🔑 Key Points</h3>
+                    <ul>
+                      {filteredCards[selectedCard].keyPoints.map((point, idx) => (
+                        <li key={idx}>{point}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                
+                <div className="modal-details">
+                  <h3>📝 Detailed Information</h3>
+                  <p>{filteredCards[selectedCard]?.content}</p>
                 </div>
-              )}
-              
-              <div className="modal-details">
-                <h3>📝 Detailed Information</h3>
-                <p>{filteredCards[selectedCard]?.content}</p>
-              </div>
-              
-              <div className="modal-footer">
-                <span className="modal-importance">
-                  Importance: {'⭐'.repeat(filteredCards[selectedCard]?.importance || 0)}
-                </span>
+                
+                <div className="modal-footer">
+                  <span className="modal-importance">
+                    Importance: {'⭐'.repeat(filteredCards[selectedCard]?.importance || 0)}
+                  </span>
+                </div>
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {fullscreenImage && (
+        <div className="image-fullscreen-overlay" onClick={closeFullscreenImage}>
+          <button
+            type="button"
+            className="fullscreen-close"
+            onClick={(e) => {
+              e.stopPropagation();
+              closeFullscreenImage();
+            }}
+            aria-label="Close fullscreen image"
+          >
+            ×
+          </button>
+          <img
+            src={fullscreenImage}
+            alt="Card full screen"
+            className="image-fullscreen"
+            onClick={(e) => e.stopPropagation()}
+          />
         </div>
       )}
     </div>

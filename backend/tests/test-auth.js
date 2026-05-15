@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const User = require('./models/mongodb/User');
+const User = require('../models/mongodb/User');
 require('dotenv').config();
 
 async function testAuth() {

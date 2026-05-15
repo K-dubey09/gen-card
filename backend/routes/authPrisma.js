@@ -1,6 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
 const prisma = require('../prismaClient');
+const { buildUserContext, clearAuthCookie, issueAuthToken, resolveAuthenticatedUser, setAuthCookie } = require('../utils/pasetoAuth');
 
 const router = express.Router();
 
@@ -53,19 +54,18 @@ router.post('/register', async (req, res) => {
             }
         });
 
+        const token = await issueAuthToken(user);
+        setAuthCookie(res, token);
+
         req.session.userId = user.id.toString();
         req.session.username = user.username;
         req.session.role = user.role;
+        req.session.authToken = token;
 
         res.status(201).json({
             success: true,
-            user: {
-                id: user.id,
-                username: user.username,
-                email: user.email,
-                credits: user.credits,
-                role: user.role
-            }
+            token,
+            user: buildUserContext(user)
         });
     } catch (error) {
         console.error('Prisma register error:', error);
@@ -99,19 +99,18 @@ router.post('/login', async (req, res) => {
 
         await prisma.user.update({ where: { id: user.id }, data: { lastLogin: new Date() } });
 
+        const token = await issueAuthToken(user);
+        setAuthCookie(res, token);
+
         req.session.userId = user.id.toString();
         req.session.username = user.username;
         req.session.role = user.role;
+        req.session.authToken = token;
 
         res.json({
             success: true,
-            user: {
-                id: user.id,
-                username: user.username,
-                email: user.email,
-                credits: user.credits,
-                role: user.role
-            }
+            token,
+            user: buildUserContext(user)
         });
     } catch (error) {
         console.error('Prisma login error:', error);
@@ -123,23 +122,20 @@ router.post('/login', async (req, res) => {
 router.post('/logout', (req, res) => {
     req.session.destroy((err) => {
         if (err) return res.status(500).json({ error: 'Logout failed' });
+        clearAuthCookie(res);
         res.json({ success: true });
     });
 });
 
 // Status
 router.get('/status', async (req, res) => {
-    if (!req.session.userId) return res.json({ authenticated: false });
-
     try {
-        const id = parseInt(req.session.userId, 10);
-        const user = await prisma.user.findUnique({ where: { id } });
-        if (user && user.isActive) {
-            res.json({ authenticated: true, userId: req.session.userId, user: { id: user.id, username: user.username, email: user.email, credits: user.credits, role: user.role } });
-        } else {
-            req.session.destroy(() => {});
-            res.json({ authenticated: false });
+        const auth = await resolveAuthenticatedUser(req);
+        if (auth) {
+            return res.json({ authenticated: true, userId: String(auth.user.id), user: auth.user });
         }
+
+        res.json({ authenticated: false });
     } catch (error) {
         console.error('Prisma status error:', error);
         res.json({ authenticated: false });

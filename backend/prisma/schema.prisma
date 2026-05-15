@@ -51,10 +51,12 @@ model Document {
   originalName String
   fileType     String
   fileSize     Int
-  filePath     String
+  filePath     String?          // Filesystem path if stored as file
+  fileBlob     Bytes?           // Binary blob if stored in database
+  storagePath  String?          // Configurable storage location metadata
   description  String?
   tags         Json?
-  category     String?
+  category     String?          // User-defined category (e.g., "Textbooks", "Notes")
   isProcessed  Boolean  @default(false)
   sessionCount Int      @default(0)
   createdAt    DateTime @default(now())

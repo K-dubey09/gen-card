@@ -354,10 +354,10 @@
 .card-modal {
   background: white;
   border-radius: 20px;
-  max-width: 800px;
-  max-height: 90vh;
-  width: 90%;
-  overflow-y: auto;
+  max-width: min(920px, 92vw);
+  max-height: 92vh;
+  width: 92vw;
+  overflow: hidden;
   position: relative;
   animation: slideUp 0.3s ease;
   box-shadow: 0 25px 100px rgba(0, 0, 0, 0.3);
@@ -399,15 +399,24 @@
 
 .modal-content {
   padding: 0;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .modal-image-container {
+  appearance: none;
+  border: 0;
+  padding: 0;
   width: 100%;
-  height: 400px;
+  height: 360px;
+  flex: 0 0 auto;
   overflow: hidden;
   border-radius: 20px 20px 0 0;
   position: relative;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  cursor: zoom-in;
 }
 
 .modal-image-container::after {
@@ -424,11 +433,15 @@
 .modal-image {
   width: 100%;
   height: 100%;
-  object-fit: cover;
-  filter: brightness(1.05) contrast(1.1);\n}
+  object-fit: contain;
+  filter: brightness(1.05) contrast(1.1);
+  background: #0f172a;
+}
 
-.modal-content > div:not(.modal-image-container) {
-  padding: 40px;
+.modal-scroll {
+  padding: 32px 40px 36px;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .modal-header {
@@ -520,6 +533,53 @@
   text-align: center;
 }
 
+.image-fullscreen-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(8, 12, 24, 0.96);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  animation: fadeIn 0.2s ease;
+}
+
+.image-fullscreen {
+  max-width: min(96vw, 1600px);
+  max-height: 96vh;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  box-shadow: 0 20px 80px rgba(0, 0, 0, 0.5);
+  border-radius: 14px;
+  background: #0f172a;
+}
+
+.fullscreen-close {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #111827;
+  font-size: 30px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 1101;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+}
+
+.fullscreen-close:hover {
+  transform: scale(1.05);
+}
+
 .modal-importance {
   font-size: 1.3em;
   color: #667eea;
@@ -581,11 +641,29 @@
     width: 100%;
   }
   
+  .card-modal {
+    width: 96vw;
+    max-height: 94vh;
+  }
+
+  .modal-image-container {
+    height: 260px;
+  }
+
+  .modal-scroll {
+    padding: 20px;
+  }
+
   .modal-content {
-    padding: 25px;
+    max-height: 94vh;
   }
   
   .modal-header h2 {
     font-size: 1.5em;
+  }
+
+  .image-fullscreen {
+    max-width: 96vw;
+    max-height: 88vh;
   }
 }

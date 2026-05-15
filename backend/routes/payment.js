@@ -39,7 +39,7 @@ router.post('/create-intent', isAuthenticated, async (req, res) => {
             amount: packageInfo.price,
             currency: 'usd',
             metadata: {
-                userId: req.session.userId,
+                userId: String(req.user.id),
                 package: packageName,
                 credits: packageInfo.credits
             }
@@ -74,7 +74,7 @@ router.post('/confirm', isAuthenticated, async (req, res) => {
         const packageInfo = CREDIT_PACKAGES[packageName];
         let user;
         if (process.env.DB_TYPE === 'postgres' || process.env.DB_TYPE === 'postgresql' || process.env.DB_TYPE === 'prisma') {
-            user = await prisma.user.findUnique({ where: { id: parseInt(req.session.userId, 10) } });
+            user = await prisma.user.findUnique({ where: { id: req.user.id } });
             if (!user) return res.status(404).json({ error: 'User not found' });
 
             const updated = await prisma.user.update({ where: { id: user.id }, data: { credits: { increment: CREDIT_PACKAGES[packageName].credits } } });
@@ -91,7 +91,7 @@ router.post('/confirm', isAuthenticated, async (req, res) => {
 
             res.json({ success: true, creditsAdded: CREDIT_PACKAGES[packageName].credits, totalCredits: updated.credits });
         } else {
-            user = await SequelizeUser.findByPk(req.session.userId);
+            user = await SequelizeUser.findByPk(req.user.id);
             user.credits += CREDIT_PACKAGES[packageName].credits;
             await user.save();
             await SequelizeTransaction.create({

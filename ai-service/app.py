@@ -1,116 +1,280 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
-from openai import OpenAI
 import PyPDF2
 import json
 import requests
-from dotenv import load_dotenv
-from PIL import Image
-import pytesseract
+import base64
 import io
-from pdf2image import convert_from_path
+import html
+from dotenv import load_dotenv
+import pypdfium2 as pdfium
+from urllib.parse import quote
 
 load_dotenv()
 
 app = Flask(__name__)
 CORS(app, origins=['http://localhost:5000'])
 
-# OpenAI Client
-client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+# Ollama configuration
+OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL', 'https://ollama.com/api').rstrip('/')
+OLLAMA_API_KEY = os.getenv('OLLAMA_API_KEY', '').strip()
+OLLAMA_TEXT_MODEL = os.getenv('OLLAMA_TEXT_MODEL', 'gpt-oss:120b')
+OLLAMA_VISION_MODEL = os.getenv('OLLAMA_VISION_MODEL', 'qwen2.5-vl:72b-instruct')
+OLLAMA_IMAGE_MODEL = os.getenv('OLLAMA_IMAGE_MODEL', OLLAMA_TEXT_MODEL)
+OLLAMA_TIMEOUT = int(os.getenv('OLLAMA_TIMEOUT', '300'))
 
-# Tesseract path (update if needed for your system)
-# For Windows: Download from https://github.com/UB-Mannheim/tesseract/wiki
-# Set path or add to system PATH
-try:
-    # Try conda environment first
-    conda_prefix = os.environ.get('CONDA_PREFIX', '')
-    conda_tesseract_paths = [
-        os.path.join(conda_prefix, 'Library', 'bin', 'tesseract.exe') if conda_prefix else None,
-        r'C:\Users\HP\miniforge3\Library\bin\tesseract.exe',
-        r'C:\ProgramData\miniforge3\Library\bin\tesseract.exe',
-        r'C:\Users\HP\anaconda3\Library\bin\tesseract.exe',
-        r'C:\ProgramData\anaconda3\Library\bin\tesseract.exe',
-    ]
-    
-    # Try standalone installations
-    standalone_paths = [
-        r'C:\Program Files\Tesseract-OCR\tesseract.exe',
-        r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe'
-    ]
-    
-    all_paths = [p for p in conda_tesseract_paths if p] + standalone_paths
-    
-    tesseract_found = False
-    for path in all_paths:
-        if os.path.exists(path):
-            pytesseract.pytesseract.tesseract_cmd = path
-            print(f"✅ Found Tesseract at: {path}")
-            
-            # Set TESSDATA_PREFIX for conda installation
-            tessdata_dir = os.path.join(os.path.dirname(path), '..', 'share', 'tessdata')
-            if os.path.exists(tessdata_dir):
-                os.environ['TESSDATA_PREFIX'] = os.path.abspath(tessdata_dir)
-                print(f"✅ Set TESSDATA_PREFIX to: {os.environ['TESSDATA_PREFIX']}")
-            
-            tesseract_found = True
-            break
-    
-    if not tesseract_found:
-        print("⚠️  Warning: Tesseract not found in common locations")
-        print("Please install Tesseract OCR: https://github.com/UB-Mannheim/tesseract/wiki")
-except Exception as e:
-    print(f"Warning: Tesseract path not set: {e}")
-    print("Please install Tesseract OCR: https://github.com/UB-Mannheim/tesseract/wiki")
+
+def ollama_headers():
+    headers = {'Content-Type': 'application/json'}
+    if OLLAMA_API_KEY:
+        headers['Authorization'] = f'Bearer {OLLAMA_API_KEY}'
+    return headers
+
+
+def clean_json_response(text):
+    result = text.strip()
+    if result.startswith('```json'):
+        result = result[7:]
+    if result.startswith('```'):
+        result = result[3:]
+    if result.endswith('```'):
+        result = result[:-3]
+    return result.strip()
+
+
+def extract_json_from_text(text):
+    cleaned = clean_json_response(text)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        import re
+        match = re.search(r'\{[\s\S]*\}', cleaned)
+        if match:
+            return json.loads(match.group(0))
+        raise
+
+
+def ollama_chat(messages, model=OLLAMA_TEXT_MODEL, temperature=0.5, num_predict=8192):
+    payload = {
+        'model': model,
+        'messages': messages,
+        'stream': False,
+        'options': {
+            'temperature': temperature,
+            'num_predict': num_predict
+        }
+    }
+
+    response = requests.post(
+        f'{OLLAMA_BASE_URL}/chat',
+        headers=ollama_headers(),
+        json=payload,
+        timeout=OLLAMA_TIMEOUT
+    )
+    response.raise_for_status()
+    data = response.json()
+
+    message = data.get('message', {})
+    content = message.get('content', '')
+    if not content:
+        raise Exception(f'Ollama returned an empty response: {data}')
+    return content
+
+
+def ollama_extract_text_from_image_bytes(image_bytes, prompt, model=OLLAMA_VISION_MODEL):
+    payload = {
+        'model': model,
+        'messages': [
+            {
+                'role': 'user',
+                'content': prompt,
+                'images': [base64.b64encode(image_bytes).decode('utf-8')]
+            }
+        ],
+        'stream': False,
+        'options': {
+            'temperature': 0.0,
+            'num_predict': 4096
+        }
+    }
+
+    response = requests.post(
+        f'{OLLAMA_BASE_URL}/chat',
+        headers=ollama_headers(),
+        json=payload,
+        timeout=OLLAMA_TIMEOUT
+    )
+    response.raise_for_status()
+    data = response.json()
+    message = data.get('message', {})
+    content = message.get('content', '')
+    if not content:
+        raise Exception(f'Ollama vision model returned an empty response: {data}')
+    return content
 
 # Image generation configuration
-# Set to False to use free Pollinations.ai instead of DALL-E (saves API costs)
-USE_DALLE = os.getenv('USE_DALLE', 'false').lower() == 'true'
+# Build readable SVG infographics from Ollama-generated visual briefs.
+def _wrap_text_lines(text, max_chars=44, max_lines=4):
+    words = (text or '').split()
+    lines = []
+    current = []
 
-def generate_ai_image(card_data, use_dalle=USE_DALLE):
-    """Generate AI image using DALL-E or free alternative based on card content"""
-    try:
-        # Create a detailed image prompt from card data
-        title = card_data.get('title', '').replace('🚀', '').replace('💡', '').replace('⚡', '').strip()
-        category = card_data.get('category', '').replace('📚', '').replace('💻', '').replace('🔬', '').strip()
-        summary = card_data.get('summary', '')[:100]  # Limit summary length
-        
-        # Create detailed prompt for professional educational image with creative elements
-        image_prompt = f"Professional educational infographic about {category}: {title}. {summary}. Blend of creative cartoon elements with professional design, knowledge flow diagrams, text annotations, icons, arrows showing concepts. High quality, modern, engaging, suitable for serious learning. Digital illustration with written content and visual explanations."
-        
-        print(f"Generating image with prompt: {image_prompt}")
-        
-        if use_dalle:
-            try:
-                # Generate image using DALL-E 3
-                response = client.images.generate(
-                    model="dall-e-3",
-                    prompt=image_prompt,
-                    size="1024x1024",
-                    quality="standard",
-                    n=1,
+    for word in words:
+        candidate = ' '.join(current + [word]).strip()
+        if len(candidate) <= max_chars:
+            current.append(word)
+        else:
+            if current:
+                lines.append(' '.join(current))
+            current = [word]
+            if len(lines) >= max_lines:
+                break
+
+    if current and len(lines) < max_lines:
+        lines.append(' '.join(current))
+
+    return lines
+
+
+def _build_card_svg_fallback(card_data):
+    title = html.escape((card_data.get('title') or 'Study Card')[:180])
+    category = html.escape((card_data.get('category') or 'Learning Topic')[:80])
+    summary = (card_data.get('summary') or card_data.get('content') or '')[:420]
+    key_points = card_data.get('keyPoints') or []
+
+    if not key_points:
+        key_points = _wrap_text_lines(summary, max_chars=60, max_lines=3)
+    else:
+        key_points = [str(kp)[:120] for kp in key_points[:4]]
+
+    title_lines = _wrap_text_lines(title, max_chars=34, max_lines=3)
+    summary_lines = _wrap_text_lines(summary, max_chars=56, max_lines=5)
+
+    bullet_rows = []
+    y = 375
+    for kp in key_points:
+        kp_lines = _wrap_text_lines(kp, max_chars=52, max_lines=2)
+        for i, line in enumerate(kp_lines):
+            prefix = '• ' if i == 0 else '  '
+            bullet_rows.append(
+                f"<text x='52' y='{y}' font-size='21' fill='#E8ECFF'>{html.escape(prefix + line)}</text>"
+            )
+            y += 28
+            if y > 560:
+                break
+        if y > 560:
+            break
+
+    title_svg = ''.join(
+        f"<text x='50' y='{110 + idx * 40}' font-size='34' font-weight='700' fill='#FFFFFF'>{html.escape(line)}</text>"
+        for idx, line in enumerate(title_lines)
+    )
+    summary_svg = ''.join(
+        f"<text x='52' y='{270 + idx * 28}' font-size='21' fill='#DCE4FF'>{html.escape(line)}</text>"
+        for idx, line in enumerate(summary_lines)
+    )
+    bullets_svg = ''.join(bullet_rows)
+
+    svg = f"""
+<svg xmlns='http://www.w3.org/2000/svg' width='800' height='600' viewBox='0 0 800 600'>
+  <defs>
+    <linearGradient id='bg' x1='0%' y1='0%' x2='100%' y2='100%'>
+      <stop offset='0%' stop-color='#1E3A8A'/>
+      <stop offset='50%' stop-color='#2563EB'/>
+      <stop offset='100%' stop-color='#0EA5E9'/>
+    </linearGradient>
+  </defs>
+  <rect width='800' height='600' fill='url(#bg)'/>
+  <rect x='34' y='32' width='732' height='536' rx='24' fill='rgba(9, 16, 44, 0.55)' stroke='rgba(255,255,255,0.25)' stroke-width='2'/>
+  <text x='50' y='66' font-size='19' font-weight='700' fill='#C7D2FE'>EXPLANATORY LEARNING CARD</text>
+  <text x='570' y='66' font-size='18' fill='#BFDBFE'>Category: {category}</text>
+  {title_svg}
+  <line x1='50' y1='222' x2='748' y2='222' stroke='rgba(255,255,255,0.3)' stroke-width='2'/>
+  {summary_svg}
+  <text x='50' y='348' font-size='22' font-weight='700' fill='#F8FAFC'>Key learning points</text>
+  {bullets_svg}
+</svg>
+""".strip()
+
+    return f"data:image/svg+xml;utf8,{quote(svg)}"
+
+
+def _generate_visual_brief_with_ollama(card_data):
+    title = (card_data.get('title') or 'Study Card').strip()
+    category = (card_data.get('category') or 'Learning Topic').strip()
+    summary = (card_data.get('summary') or card_data.get('content') or '').strip()
+    key_points = card_data.get('keyPoints') or []
+    key_points_text = '\n'.join([f"- {str(kp)}" for kp in key_points[:6]])
+
+    prompt = f"""Create a visual teaching brief for an educational infographic.
+
+Topic title: {title}
+Category: {category}
+Summary:
+{summary[:900]}
+
+Key points:
+{key_points_text if key_points_text else '- Generate key points from the summary'}
+
+Return ONLY valid JSON:
+{{
+  "title": "short readable title (max 80 chars)",
+  "category": "short category (max 30 chars)",
+  "summary": "2-3 concise explanatory lines (max 240 chars)",
+  "keyPoints": [
+    "point 1",
+    "point 2",
+    "point 3",
+    "point 4"
+  ]
+}}"""
+
+    result = ollama_chat(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "You are an educational visual designer. "
+                    "Return compact, concrete, student-friendly text that can be rendered into a readable infographic. "
+                    "Output valid JSON only."
                 )
-                
-                image_url = response.data[0].url
-                print(f"Successfully generated DALL-E image: {image_url}")
-                return image_url
-            except Exception as dalle_error:
-                print(f"DALL-E failed, trying alternative: {dalle_error}")
-                use_dalle = False
-        
-        if not use_dalle:
-            # Use Pollinations.ai - Free AI image generation API
-            # Clean prompt for URL encoding
-            clean_prompt = image_prompt.replace(' ', '%20').replace(',', '%2C')[:200]
-            image_url = f"https://image.pollinations.ai/prompt/{clean_prompt}?width=800&height=600&nologo=true&enhance=true"
-            print(f"Using Pollinations.ai image: {image_url}")
-            return image_url
+            },
+            {"role": "user", "content": prompt}
+        ],
+        model=OLLAMA_IMAGE_MODEL,
+        temperature=0.35,
+        num_predict=1400
+    )
+
+    brief = extract_json_from_text(result)
+    clean_brief = {
+        'title': str(brief.get('title') or title)[:180],
+        'category': str(brief.get('category') or category)[:80],
+        'summary': str(brief.get('summary') or summary)[:420],
+        'keyPoints': brief.get('keyPoints') or key_points or []
+    }
+
+    if not isinstance(clean_brief['keyPoints'], list):
+        clean_brief['keyPoints'] = [str(clean_brief['keyPoints'])]
+
+    clean_brief['keyPoints'] = [str(point)[:120] for point in clean_brief['keyPoints'][:4]]
+    return clean_brief
+
+
+def generate_ai_image(card_data):
+    """Generate readable, topic-specific infographic images using Ollama."""
+    try:
+        fallback_url = _build_card_svg_fallback(card_data)
+        visual_brief = _generate_visual_brief_with_ollama(card_data)
+        svg_image = _build_card_svg_fallback(visual_brief)
+        print(f"Generated Ollama SVG infographic for: {visual_brief.get('title', 'card')}")
+        return {'primary': svg_image, 'fallback': fallback_url}
         
     except Exception as e:
-        print(f"AI image generation error: {e}")
-        # Fallback to placeholder with card title
-        title_text = card_data.get('title', 'Study Card')[:30].replace(' ', '+')
-        return f"https://placehold.co/800x600/667eea/white?text={title_text}"
+        print(f"Ollama image generation error: {e}")
+        fallback_url = _build_card_svg_fallback(card_data)
+        return {'primary': fallback_url, 'fallback': fallback_url}
 
 def extract_text_from_pdf(file_path):
     """Extract text from PDF file (handles both text-based and image-based PDFs)"""
@@ -138,64 +302,35 @@ def extract_text_from_pdf(file_path):
             sys.stderr.write(f"✅ Total extracted text length: {len(text.strip())} characters\n")
             sys.stderr.flush()
         
-        # If no text extracted (image-based PDF), use OCR
+        # If no text extracted (image-based PDF), use Ollama vision OCR
         if len(text.strip()) < 10:
             sys.stderr.write("🖼️  Text extraction yielded minimal content - PDF appears to be image-based\n")
-            sys.stderr.write("🔍 Converting PDF pages to images for OCR...\n")
+            sys.stderr.write("🔍 Rendering PDF pages for Ollama OCR...\n")
             sys.stderr.flush()
             
             try:
-                # Try common poppler paths on Windows
-                import os
-                conda_prefix = os.environ.get('CONDA_PREFIX', '')
-                poppler_paths = [
-                    os.path.join(conda_prefix, 'Library', 'bin') if conda_prefix else None,
-                    r'C:\Users\HP\miniforge3\Library\bin',
-                    r'C:\ProgramData\miniforge3\Library\bin',
-                    r'C:\Users\HP\anaconda3\Library\bin',
-                    r'C:\ProgramData\anaconda3\Library\bin',
-                    r'C:\poppler\Library\bin',
-                    r'C:\Program Files\poppler\Library\bin',
-                    r'C:\poppler-24.08.0\Library\bin',
-                    None  # Will try system PATH
-                ]
-                
-                # Filter out None values
-                poppler_paths = [p for p in poppler_paths if p]
-                
-                images = None
-                for poppler_path in poppler_paths:
-                    try:
-                        if poppler_path:
-                            sys.stderr.write(f"Trying poppler path: {poppler_path}\n")
-                            sys.stderr.flush()
-                            # Limit to first 10 pages for faster processing
-                            images = convert_from_path(file_path, dpi=200, first_page=1, last_page=10, poppler_path=poppler_path)
-                        else:
-                            sys.stderr.write("Trying poppler from system PATH\n")
-                            sys.stderr.flush()
-                            images = convert_from_path(file_path, dpi=200, first_page=1, last_page=10)
-                        sys.stderr.write(f"✅ Successfully converted {len(images)} pages using poppler\n")
-                        sys.stderr.flush()
-                        break
-                    except Exception as path_error:
-                        sys.stderr.write(f"⚠️  Failed with this path: {str(path_error)}\n")
-                        sys.stderr.flush()
-                        continue
-                
-                if not images:
-                    raise Exception("Poppler not found in any common location")
-                    
-                sys.stderr.write(f"✅ Converted {len(images)} pages to images\n")
+                doc = pdfium.PdfDocument(file_path)
+                images = []
+                for page_index in range(min(len(doc), 10)):
+                    page = doc.get_page(page_index)
+                    bitmap = page.render(scale=2)
+                    pil_image = bitmap.to_pil()
+                    image_buffer = io.BytesIO()
+                    pil_image.save(image_buffer, format='PNG')
+                    images.append(image_buffer.getvalue())
+
+                sys.stderr.write(f"✅ Rendered {len(images)} pages with PyMuPDF\n")
                 sys.stderr.flush()
                 
                 text = ""
-                for i, image in enumerate(images):
+                for i, image_bytes in enumerate(images):
                     sys.stderr.write(f"🔍 Running OCR on page {i+1}/{len(images)}...\n")
                     sys.stderr.flush()
                     
-                    # Use pytesseract to extract text
-                    page_text = pytesseract.image_to_string(image, lang='eng')
+                    page_text = ollama_extract_text_from_image_bytes(
+                        image_bytes,
+                        'Extract all readable text from this PDF page. Return plain text only and preserve headings, bullet points, and line breaks where possible.'
+                    )
                     text += f"\n--- Page {i+1} ---\n{page_text}\n"
                     
                     if i == 0:
@@ -208,10 +343,9 @@ def extract_text_from_pdf(file_path):
                 
             except Exception as ocr_error:
                 sys.stderr.write(f"❌ OCR extraction failed: {str(ocr_error)}\n")
-                sys.stderr.write("📋 Please install Poppler: https://github.com/oschwartz10612/poppler-windows/releases/\n")
-                sys.stderr.write("📋 See ai-service/setup_poppler.md for instructions\n")
+                sys.stderr.write("📋 Ensure Ollama is running and the vision model is available.\n")
                 sys.stderr.flush()
-                raise Exception(f"Image-based PDF detected but OCR failed. Install Poppler for image extraction. Error: {str(ocr_error)}")
+                raise Exception(f"Image-based PDF detected but OCR failed using Ollama vision. Error: {str(ocr_error)}")
             
     except Exception as e:
         import sys
@@ -221,32 +355,20 @@ def extract_text_from_pdf(file_path):
     return text
 
 def extract_text_from_image(file_path):
-    """Extract text from image using OCR (supports handwritten notes)"""
+    """Extract text from image using Ollama vision OCR (supports handwritten notes)"""
     text = ""
     try:
-        # Open image
-        image = Image.open(file_path)
-        
-        # Convert to RGB if needed
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
-        
-        # Perform OCR with config for better handwriting recognition
-        # PSM 6 = Assume a single uniform block of text
-        # PSM 3 = Fully automatic page segmentation (default)
-        custom_config = r'--oem 3 --psm 3'
-        text = pytesseract.image_to_string(image, config=custom_config)
-        
-        # If text is too short, try with different PSM mode
-        if len(text.strip()) < 50:
-            print("Trying alternative OCR configuration...")
-            custom_config = r'--oem 3 --psm 6'
-            text = pytesseract.image_to_string(image, config=custom_config)
-        
+        with open(file_path, 'rb') as file:
+            image_bytes = file.read()
+
+        text = ollama_extract_text_from_image_bytes(
+            image_bytes,
+            'Extract all readable text from this image. Return plain text only, preserving line breaks and headings where possible.'
+        )
         print(f"OCR extracted {len(text)} characters from image")
         
     except Exception as e:
-        raise Exception(f"OCR extraction failed: {str(e)}. Make sure Tesseract is installed.")
+        raise Exception(f"OCR extraction failed: {str(e)}. Make sure Ollama and the vision model are available.")
     
     return text
 
@@ -272,7 +394,7 @@ def chunk_text(text, max_length=10000):
     return chunks
 
 def generate_cards_with_ai(text, num_cards=10):
-    """Generate study cards using OpenAI API - focus on quality from start of content"""
+    """Generate study cards using Ollama - focus on quality from start of content"""
     all_cards = []
     
     # For quality focus, use beginning of text only (don't spread across entire document)
@@ -357,56 +479,27 @@ Content to analyze:
 {focused_text[:4000]}"""
 
         try:
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
+            result = ollama_chat(
+                [
                     {"role": "system", "content": f"You are an expert educational content creator. CRITICAL: Return EXACTLY {cards_to_generate} cards. Create comprehensive, detailed learning cards with substantial text content (200-400 words) that students can READ and LEARN from. Include detailed explanations, examples, step-by-step breakdowns, formulas, and practical applications. Focus on educational depth and clarity. Return only valid JSON."},
                     {"role": "user", "content": prompt}
                 ],
+                model=OLLAMA_TEXT_MODEL,
                 temperature=0.5,
-                max_tokens=16000  # Increased from 4000 to handle 10 detailed cards
+                num_predict=16000
             )
-            
-            result = response.choices[0].message.content.strip()
-            
-            # Try to parse JSON - handle markdown code blocks
-            if result.startswith('```json'):
-                result = result[7:]
-            if result.startswith('```'):
-                result = result[3:]
-            if result.endswith('```'):
-                result = result[:-3]
-            result = result.strip()
-            
-            # Try to parse JSON
+            result = clean_json_response(result)
+
             try:
-                cards_data = json.loads(result)
+                cards_data = extract_json_from_text(result)
             except json.JSONDecodeError as e:
                 import sys
                 sys.stderr.write(f"❌ JSON parsing error: {e}\n")
                 sys.stderr.write(f"📄 Raw response preview (first 500 chars):\n{result[:500]}\n")
                 sys.stderr.write(f"📄 Raw response end (last 500 chars):\n{result[-500:]}\n")
                 sys.stderr.flush()
-                
-                # Try to fix common JSON issues
-                # Attempt 1: Find JSON object in response
-                import re
-                json_match = re.search(r'\{[\s\S]*\}', result)
-                if json_match:
-                    sys.stderr.write("🔧 Attempting to extract JSON from response...\n")
-                    sys.stderr.flush()
-                    try:
-                        result = json_match.group(0)
-                        cards_data = json.loads(result)
-                        sys.stderr.write("✅ Successfully extracted and parsed JSON!\n")
-                        sys.stderr.flush()
-                    except:
-                        sys.stderr.write("❌ JSON extraction failed\n")
-                        sys.stderr.flush()
-                        raise e
-                else:
-                    raise e
-            
+                raise e
+
             if 'cards' in cards_data:
                 new_cards = cards_data['cards'][:cards_to_generate]  # Enforce exact count
                 
@@ -425,18 +518,20 @@ Content to analyze:
                     except Exception as e:
                         sys.stderr.write(f"❌ Failed to generate image for card {idx+1}: {e}\n")
                         sys.stderr.flush()
-                        return f"https://placehold.co/800x600/667eea/white?text={card.get('title', 'Card')[:20]}"
+                        fallback_url = _build_card_svg_fallback(card)
+                        return {'primary': fallback_url, 'fallback': fallback_url}
                 
                 # Use ThreadPoolExecutor for parallel image generation (max 8 concurrent for speed)
                 sys.stderr.write(f"🚀 Starting parallel image generation for {len(new_cards)} cards...\n")
                 sys.stderr.flush()
                 
                 with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-                    image_urls = list(executor.map(generate_image_for_card, enumerate(new_cards)))
+                    image_assets = list(executor.map(generate_image_for_card, enumerate(new_cards)))
                 
                 # Assign generated image URLs to cards
                 for i, card in enumerate(new_cards):
-                    card['imageUrl'] = image_urls[i]
+                    card['imageUrl'] = image_assets[i]['primary']
+                    card['fallbackImageUrl'] = image_assets[i]['fallback']
                 
                 sys.stderr.write(f"✅ All images generated!\n")
                 sys.stderr.flush()
@@ -535,63 +630,45 @@ Return ONLY valid JSON in this exact format:
   }}
 }}"""
 
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
+        result = ollama_chat(
+            [
                 {"role": "system", "content": "You are a creative educational experience designer who crafts inspiring, visual learning journeys. Use emojis, vivid language, and create memorable phase names. Return only valid JSON."},
                 {"role": "user", "content": prompt}
             ],
+            model=OLLAMA_TEXT_MODEL,
             temperature=0.8,
-            max_tokens=3000
+            num_predict=3000
         )
+        roadmap_data = extract_json_from_text(result)
         
-        result = response.choices[0].message.content.strip()
-        
-        # Clean JSON markers
-        if result.startswith('```json'):
-            result = result[7:]
-        if result.startswith('```'):
-            result = result[3:]
-        if result.endswith('```'):
-            result = result[:-3]
-        
-        result = result.strip()
-        roadmap_data = json.loads(result)
-        
-        # Generate AI images for each phase
+        # Generate roadmap phase images via Ollama visual briefs
         roadmap = roadmap_data.get('roadmap', {})
         if 'phases' in roadmap:
             for phase in roadmap['phases']:
                 try:
-                    # Create image prompt for phase
-                    phase_name = phase.get('phaseName', '').replace('🌱', '').replace('🚀', '').replace('💡', '').strip()
-                    phase_desc = phase.get('description', '')[:100]
-                    
-                    image_prompt = f"Professional educational infographic for learning phase: {phase_name}. {phase_desc}. Blend of creative cartoon elements with professional diagrams, knowledge flow arrows, text annotations, concept illustrations. High quality, modern, engaging learning visual with written explanations."
-                    
-                    print(f"Generating phase image: {image_prompt}")
-                    
-                    # Try DALL-E first, fallback to free API
-                    try:
-                        response = client.images.generate(
-                            model="dall-e-3",
-                            prompt=image_prompt,
-                            size="1024x1024",
-                            quality="standard",
-                            n=1,
-                        )
-                        phase['imageUrl'] = response.data[0].url
-                        print(f"Generated DALL-E phase image: {phase['imageUrl']}")
-                    except Exception as dalle_error:
-                        print(f"DALL-E failed for phase, using Pollinations: {dalle_error}")
-                        clean_prompt = image_prompt.replace(' ', '%20').replace(',', '%2C')[:200]
-                        phase['imageUrl'] = f"https://image.pollinations.ai/prompt/{clean_prompt}?width=800&height=600&nologo=true&enhance=true"
-                        print(f"Using Pollinations.ai for phase: {phase['imageUrl']}")
+                    phase_card_data = {
+                        'title': phase.get('phaseName', 'Learning Phase'),
+                        'category': f"Roadmap - {topic}",
+                        'summary': phase.get('description', ''),
+                        'keyPoints': (phase.get('learningObjectives') or [])[:3] + (phase.get('tips') or [])[:2]
+                    }
+
+                    phase_image = generate_ai_image(phase_card_data)
+                    phase['imageUrl'] = phase_image['primary']
+                    phase['fallbackImageUrl'] = phase_image['fallback']
+                    print(f"Generated Ollama roadmap image for phase: {phase.get('phaseName', 'Phase')}")
                     
                 except Exception as e:
                     print(f"Failed to generate phase image: {e}")
-                    phase_text = phase.get('phaseName', 'Phase')[:30].replace(' ', '+')
-                    phase['imageUrl'] = f"https://placehold.co/800x600/{phase.get('color', '667eea')}/white?text={phase_text}"
+                    phase_card_data = {
+                        'title': phase.get('phaseName', 'Learning Phase'),
+                        'category': f"Roadmap - {topic}",
+                        'summary': phase.get('description', ''),
+                        'keyPoints': phase.get('learningObjectives', [])
+                    }
+                    fallback_url = _build_card_svg_fallback(phase_card_data)
+                    phase['imageUrl'] = fallback_url
+                    phase['fallbackImageUrl'] = fallback_url
         
         return jsonify({
             'success': True,
@@ -709,8 +786,10 @@ if __name__ == '__main__':
     print('=' * 60)
     print('\n🚀 Starting Python AI microservice...')
     print('🔌 Endpoint: http://localhost:5001/generate-cards')
-    print('🔑 OpenAI API: Configured')
-    print('📸 OCR Support: Enabled (Handwritten notes supported)')
+    print(f'🧠 Ollama text model: {OLLAMA_TEXT_MODEL}')
+    print(f'🎨 Ollama image model: {OLLAMA_IMAGE_MODEL}')
+    print(f'👁️  Ollama vision model: {OLLAMA_VISION_MODEL}')
+    print('📸 OCR Support: Enabled via Ollama vision')
     print(f'\n{"=" * 60}\n')
     
     app.run(host='0.0.0.0', port=5001, debug=True)

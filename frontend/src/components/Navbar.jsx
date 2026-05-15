@@ -39,7 +39,7 @@ function Navbar() {
             {theme === 'light' ? '🌙' : '☀️'}
           </button>
           <div className="credits-display">
-            💳 {user?.credits || 0} credits
+            💳 {user?.isUnlimited ? 'Unlimited' : `${user?.credits || 0} credits`}
           </div>
           <span className="username">👤 {user?.username}</span>
           <button onClick={logout} className="logout-btn">Logout</button>
