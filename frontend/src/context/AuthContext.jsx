@@ -54,8 +54,8 @@ export const AuthProvider = ({ children }) => {
       const response = await axios.get(`${API_URL}/auth/status`, config);
       if (response.data.authenticated && response.data.user) {
         setUser(normalizeUser(response.data.user));
-        // Ensure token is in localStorage
-        if (storedToken && response.data.token) {
+        // Persist token returned by server (either cookie-originated or new)
+        if (response.data.token) {
           localStorage.setItem('auth_token', response.data.token);
         }
       } else {

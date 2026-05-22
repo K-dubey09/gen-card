@@ -1,7 +1,8 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
 const prisma = require('../prismaClient');
-const { buildUserContext, clearAuthCookie, issueAuthToken, resolveAuthenticatedUser, setAuthCookie } = require('../utils/pasetoAuth');
+const { buildUserContext, clearAuthCookie, issueAuthToken, setAuthCookie } = require('../utils/pasetoAuth');
+const { resolveAuthenticatedUser } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -132,7 +133,7 @@ router.get('/status', async (req, res) => {
     try {
         const auth = await resolveAuthenticatedUser(req);
         if (auth) {
-            return res.json({ authenticated: true, userId: String(auth.user.id), user: auth.user });
+            return res.json({ authenticated: true, userId: String(auth.user.id), user: auth.user, token: auth.token || null });
         }
 
         res.json({ authenticated: false });
