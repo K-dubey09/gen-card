@@ -138,43 +138,81 @@ def _wrap_text_lines(text, max_chars=44, max_lines=4):
 
 
 def _build_card_svg_fallback(card_data):
-    title = html.escape((card_data.get('title') or 'Study Card')[:180])
-    category = html.escape((card_data.get('category') or 'Learning Topic')[:80])
-    summary = (card_data.get('summary') or card_data.get('content') or '')[:420]
+    title_raw = (card_data.get('title') or 'Study Card').strip()
+    category_raw = (card_data.get('category') or 'Learning Topic').strip()
+    summary_raw = (card_data.get('summary') or card_data.get('content') or '').strip()
+    tagline_raw = str(card_data.get('tagline') or '').strip()
+    subtitle_raw = str(card_data.get('subtitle') or '').strip()
+    visual_metaphor_raw = str(card_data.get('visualMetaphor') or '').strip()
+    callout_raw = str(card_data.get('callout') or '').strip()
     key_points = card_data.get('keyPoints') or []
 
     if not key_points:
-        key_points = _wrap_text_lines(summary, max_chars=60, max_lines=3)
+        key_points = _wrap_text_lines(summary_raw, max_chars=56, max_lines=4)
     else:
-        key_points = [str(kp)[:120] for kp in key_points[:4]]
+        key_points = [str(kp).strip()[:120] for kp in key_points[:4]]
 
-    title_lines = _wrap_text_lines(title, max_chars=34, max_lines=3)
-    summary_lines = _wrap_text_lines(summary, max_chars=56, max_lines=5)
+    title = html.escape(title_raw[:180])
+    category = html.escape(category_raw[:80])
+    tagline = html.escape(tagline_raw[:160])
+    subtitle = html.escape(subtitle_raw[:220])
+    visual_metaphor = html.escape(visual_metaphor_raw[:160])
+    callout = html.escape(callout_raw[:160])
 
-    bullet_rows = []
-    y = 375
-    for kp in key_points:
-        kp_lines = _wrap_text_lines(kp, max_chars=52, max_lines=2)
-        for i, line in enumerate(kp_lines):
-            prefix = '• ' if i == 0 else '  '
-            bullet_rows.append(
-                f"<text x='52' y='{y}' font-size='21' fill='#E8ECFF'>{html.escape(prefix + line)}</text>"
+    title_lines = _wrap_text_lines(title_raw, max_chars=24, max_lines=3)
+    subtitle_lines = _wrap_text_lines(subtitle_raw or summary_raw, max_chars=48, max_lines=2)
+    summary_lines = _wrap_text_lines(summary_raw, max_chars=46, max_lines=3)
+
+    centers = [(400, 170), (570, 300), (400, 430), (230, 300)]
+    node_colors = ['#38BDF8', '#34D399', '#F59E0B', '#F472B6']
+    nodes = []
+    # If structured branches are provided use them, otherwise fall back to key_points
+    branches = card_data.get('branches') or []
+    if branches and isinstance(branches, list):
+        for idx, branch in enumerate(branches[:4]):
+            label = str(branch.get('label') or branch.get('title') or '')
+            child_nodes = branch.get('nodes') or []
+            lines = _wrap_text_lines(label or (key_points[idx] if idx < len(key_points) else ''), max_chars=20, max_lines=3)
+            nodes.append((centers[idx][0], centers[idx][1], lines, node_colors[idx], child_nodes[:3]))
+    else:
+        for idx, kp in enumerate(key_points[:4]):
+            nodes.append((centers[idx][0], centers[idx][1], _wrap_text_lines(kp, max_chars=20, max_lines=3), node_colors[idx], []))
+
+    connector_svg = ''.join(
+        f"<line x1='400' y1='300' x2='{cx}' y2='{cy}' stroke='rgba(255,255,255,0.38)' stroke-width='3'/>"
+        for cx, cy, _, _, _ in nodes
+    )
+
+    node_svg = []
+    for cx, cy, lines, color, children in nodes:
+        node_svg.append(f"<circle cx='{cx}' cy='{cy}' r='118' fill='{color}' fill-opacity='0.16' stroke='{color}' stroke-width='3'/>")
+        node_svg.append(f"<circle cx='{cx}' cy='{cy}' r='90' fill='rgba(9, 16, 44, 0.90)' stroke='rgba(255,255,255,0.16)' stroke-width='2'/>")
+        for i, line in enumerate(lines):
+            node_svg.append(
+                f"<text x='{cx}' y='{cy - 16 + i * 22}' text-anchor='middle' font-size='16' font-weight='700' fill='#FFFFFF'>{html.escape(line)}</text>"
             )
-            y += 28
-            if y > 560:
-                break
-        if y > 560:
-            break
+        # render up to 3 child nodes below the branch circle
+        for j, child in enumerate(children[:3]):
+            child_y = cy + 70 + j * 22
+            # connector from circle edge to child text
+            node_svg.append(f"<line x1='{cx}' y1='{cy + 44}' x2='{cx}' y2='{child_y - 8}' stroke='rgba(255,255,255,0.18)' stroke-width='1' stroke-dasharray='3 3'/>")
+            node_svg.append(f"<text x='{cx}' y='{child_y}' text-anchor='middle' font-size='13' fill='#DCE8FF'>{html.escape(str(child)[:40])}</text>")
 
     title_svg = ''.join(
-        f"<text x='50' y='{110 + idx * 40}' font-size='34' font-weight='700' fill='#FFFFFF'>{html.escape(line)}</text>"
+        f"<text x='400' y='{104 + idx * 34}' text-anchor='middle' font-size='30' font-weight='800' fill='#FFFFFF'>{html.escape(line)}</text>"
         for idx, line in enumerate(title_lines)
     )
+    subtitle_svg = ''.join(
+        f"<text x='400' y='{214 + idx * 22}' text-anchor='middle' font-size='18' fill='#DCE8FF'>{html.escape(line)}</text>"
+        for idx, line in enumerate(subtitle_lines)
+    )
     summary_svg = ''.join(
-        f"<text x='52' y='{270 + idx * 28}' font-size='21' fill='#DCE4FF'>{html.escape(line)}</text>"
+        f"<text x='400' y='{500 + idx * 20}' text-anchor='middle' font-size='17' fill='#E8ECFF'>{html.escape(line)}</text>"
         for idx, line in enumerate(summary_lines)
     )
-    bullets_svg = ''.join(bullet_rows)
+    tagline_svg = f"<text x='400' y='72' text-anchor='middle' font-size='18' font-style='italic' fill='#BFDBFE'>{tagline}</text>" if tagline else ''
+    callout_svg = f"<text x='400' y='548' text-anchor='middle' font-size='15' fill='#AFCBFF'>{callout}</text>" if callout else ''
+    metaphor_svg = f"<text x='52' y='580' font-size='14' fill='#AFCBFF'>Mind map theme: {visual_metaphor}</text>" if visual_metaphor else ''
 
     svg = f"""
 <svg xmlns='http://www.w3.org/2000/svg' width='800' height='600' viewBox='0 0 800 600'>
@@ -187,13 +225,18 @@ def _build_card_svg_fallback(card_data):
   </defs>
   <rect width='800' height='600' fill='url(#bg)'/>
   <rect x='34' y='32' width='732' height='536' rx='24' fill='rgba(9, 16, 44, 0.55)' stroke='rgba(255,255,255,0.25)' stroke-width='2'/>
-  <text x='50' y='66' font-size='19' font-weight='700' fill='#C7D2FE'>EXPLANATORY LEARNING CARD</text>
+  <text x='50' y='66' font-size='19' font-weight='700' fill='#C7D2FE'>EXPLANATORY LEARNING MIND MAP</text>
   <text x='570' y='66' font-size='18' fill='#BFDBFE'>Category: {category}</text>
+  {tagline_svg}
+  <circle cx='400' cy='300' r='132' fill='rgba(255,255,255,0.14)' stroke='rgba(255,255,255,0.35)' stroke-width='3'/>
+  <circle cx='400' cy='300' r='98' fill='rgba(9, 16, 44, 0.90)' stroke='rgba(255,255,255,0.22)' stroke-width='2'/>
   {title_svg}
-  <line x1='50' y1='222' x2='748' y2='222' stroke='rgba(255,255,255,0.3)' stroke-width='2'/>
+  {subtitle_svg}
+  {connector_svg}
+  {''.join(node_svg)}
   {summary_svg}
-  <text x='50' y='348' font-size='22' font-weight='700' fill='#F8FAFC'>Key learning points</text>
-  {bullets_svg}
+  {callout_svg}
+  {metaphor_svg}
 </svg>
 """.strip()
 
@@ -207,7 +250,7 @@ def _generate_visual_brief_with_ollama(card_data):
     key_points = card_data.get('keyPoints') or []
     key_points_text = '\n'.join([f"- {str(kp)}" for kp in key_points[:6]])
 
-    prompt = f"""Create a visual teaching brief for an educational infographic.
+    prompt = f"""Create a creative educational image brief for a mind-map style infographic.
 
 Topic title: {title}
 Category: {category}
@@ -217,27 +260,29 @@ Summary:
 Key points:
 {key_points_text if key_points_text else '- Generate key points from the summary'}
 
-Return ONLY valid JSON:
-{{
-  "title": "short readable title (max 80 chars)",
-  "category": "short category (max 30 chars)",
-  "summary": "2-3 concise explanatory lines (max 240 chars)",
-  "keyPoints": [
-    "point 1",
-    "point 2",
-    "point 3",
-    "point 4"
-  ]
-}}"""
+The image should explain the card topic visually as a mind map: one central idea in the middle, with 3-5 connected branches around it. For each branch, provide a short `label` and up to 3 short `nodes` (child captions) that expand the branch. Use the actual card details to decide branch labels and nodes; avoid generic filler.
+
+Return ONLY valid JSON with these fields:
+{
+    "title": "short readable title (max 80 chars)",
+    "category": "short category (max 30 chars)",
+    "tagline": "catchy one-line creative phrase (max 80 chars)",
+    "subtitle": "1-2 line explanatory subtitle (max 180 chars)",
+    "visualMetaphor": "short phrase describing the mind-map theme",
+    "callout": "one short sentence to highlight on the image (max 140 chars)",
+    "central": "central node text",
+    "branches": [
+        {"label": "Branch label", "nodes": ["child 1", "child 2"]}
+    ],
+    "summary": "2-3 concise explanatory lines (max 240 chars)"
+}"""
 
     result = ollama_chat(
         [
             {
                 "role": "system",
                 "content": (
-                    "You are an educational visual designer. "
-                    "Return compact, concrete, student-friendly text that can be rendered into a readable infographic. "
-                    "Output valid JSON only."
+                    "You are an educational visual designer. Return compact, concrete, student-friendly text that can be rendered into a readable mind-map infographic. Output valid JSON only."
                 )
             },
             {"role": "user", "content": prompt}
@@ -251,6 +296,12 @@ Return ONLY valid JSON:
     clean_brief = {
         'title': str(brief.get('title') or title)[:180],
         'category': str(brief.get('category') or category)[:80],
+        'tagline': str(brief.get('tagline') or '')[:160],
+        'subtitle': str(brief.get('subtitle') or '')[:220],
+        'visualMetaphor': str(brief.get('visualMetaphor') or '')[:160],
+        'callout': str(brief.get('callout') or '')[:140],
+        'central': str(brief.get('central') or title)[:160],
+        'branches': brief.get('branches') or [],
         'summary': str(brief.get('summary') or summary)[:420],
         'keyPoints': brief.get('keyPoints') or key_points or []
     }
@@ -258,6 +309,32 @@ Return ONLY valid JSON:
     if not isinstance(clean_brief['keyPoints'], list):
         clean_brief['keyPoints'] = [str(clean_brief['keyPoints'])]
 
+    # Normalize branches: ensure a list of {label, nodes}
+    raw_branches = brief.get('branches') or []
+    normalized = []
+    if isinstance(raw_branches, list):
+        for b in raw_branches[:4]:
+            if isinstance(b, dict):
+                label = str(b.get('label') or b.get('title') or '')[:120]
+                nodes = b.get('nodes') or []
+                if isinstance(nodes, (list, tuple)):
+                    nodes = [str(n)[:80] for n in nodes][:3]
+                else:
+                    nodes = [str(nodes)[:80]]
+                normalized.append({'label': label or '', 'nodes': nodes})
+            else:
+                s = str(b)[:120]
+                normalized.append({'label': s, 'nodes': []})
+    else:
+        # parse simple text into branch labels
+        text = str(raw_branches)
+        lines = [ln.strip('- ').strip() for ln in text.splitlines() if ln.strip()][:4]
+        normalized = [{'label': l[:120], 'nodes': []} for l in lines]
+
+    if not normalized and clean_brief.get('keyPoints'):
+        normalized = [{'label': str(k)[:120], 'nodes': []} for k in clean_brief['keyPoints'][:4]]
+
+    clean_brief['branches'] = normalized
     clean_brief['keyPoints'] = [str(point)[:120] for point in clean_brief['keyPoints'][:4]]
     return clean_brief
 
